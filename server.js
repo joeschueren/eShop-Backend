@@ -3,6 +3,7 @@ const cors = require("cors");
 const bcrypt = require("bcrypt");
 const mongoose = require("mongoose");
 const dotenv = require("dotenv").config();
+const stripe = require('stripe')(process.env.STRIPE_KEY);
 
 const saltRounds = 10;
 
@@ -105,6 +106,14 @@ const inventorySchema = {
 
 const Inventory = mongoose.model("inventory", inventorySchema);
 
+let storeItems = new Map();
+
+Inventory.find().exec().then((docs) => {
+    for(let i = 0; i< docs.length; i++){
+        storeItems.set(docs[i].id, {priceInCents: docs[i].price*100, name: docs[i].title})
+    }
+});
+
 // Gets all the items from the inventory and sends them over to server
 app.get("/inventory", function(req, res){
     Inventory.find().sort({id: 1})
@@ -147,6 +156,34 @@ app.post("/delete/"+apiKey, function(req, res){
     let title = req.body.title;
     Inventory.findOneAndDelete({title: title}).then((err) => console.log(err))
 
+})
+
+app.post("/checkout", async function(req, res){
+    try{
+    const session = await stripe.checkout.sessions.create({
+        payment_method_types: ["card"],
+        mode: "payment",
+        line_items: req.body.items.map(item => {
+            const storeItem = storeItems.get(item.id)
+            return{
+            price_data:{
+                currency: "usd",
+                product_data: {
+                    name: storeItem.name
+                },
+                unit_amount: storeItem.priceInCents
+            },
+            quantity: item.quantity
+        }
+        }),
+        success_url: "https://eshop-three-neon.vercel.app/",
+        cancel_url: "https://eshop-three-neon.vercel.app/cart"
+    })
+    res.json({url: session.url})
+    }
+    catch(e) {
+        res.status(500).json({erroe: e.message})
+    }
 })
 
 app.listen(5000, function(){
